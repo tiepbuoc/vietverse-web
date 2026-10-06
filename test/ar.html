@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Vietverse | Quét thẻ bài AR</title>
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700;800&family=Be+Vietnam+Pro:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  :root{--red:#d32f2f;--gold:#f5c842;}
+  html,body{height:100%;background:#180000;color:#fff;font-family:'Be Vietnam Pro',sans-serif;overflow:hidden;}
+  #stage{position:fixed;inset:0;}
+  #stage video,#stage canvas{position:absolute;top:0;left:0;}
+  .chip{position:fixed;z-index:20;background:rgba(0,0,0,.6);backdrop-filter:blur(6px);border-radius:999px;font-weight:700;}
+  #back{top:16px;left:16px;padding:9px 18px;color:#fff;text-decoration:none;font-size:14px;}
+  #tag{top:16px;right:16px;padding:9px 16px;color:var(--gold);font-size:.85rem;display:none;}
+  #hint{bottom:36px;left:50%;transform:translateX(-50%);padding:10px 22px;font-size:13px;text-align:center;max-width:90vw;display:none;}
+  #intro{position:fixed;inset:0;z-index:30;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center;background:radial-gradient(circle at 50% 30%,#7a0f0f,#180000);}
+  #intro h1{font-family:'Baloo 2',cursive;font-size:clamp(2rem,7vw,3.4rem);line-height:1.15;}
+  #intro p{max-width:460px;line-height:1.7;color:rgba(255,255,255,.85);font-size:.95rem;}
+  #go{border:none;border-radius:16px;padding:16px 36px;font:800 1rem 'Be Vietnam Pro',sans-serif;color:#fff;cursor:pointer;background:linear-gradient(135deg,var(--red),#ef5350);box-shadow:0 8px 24px rgba(211,47,47,.45);}
+  #go:disabled{opacity:.6;cursor:wait;}
+  #msg{min-height:1.4em;font-size:.88rem;color:#ffcdd2;}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<a class="chip" id="back" href="index.html">← Trang chủ</a>
+<div class="chip" id="tag"></div>
+<div class="chip" id="hint">📷 Đưa camera vào một thẻ bài</div>
+
+<div id="intro">
+  <h1>Quét thẻ bài<br>Vietverse AR</h1>
+  <p>Đưa camera vào thẻ bài di tích bất kỳ — mô hình 3D của thẻ sẽ hiện lên ngay trên thẻ. Không cần cài app.</p>
+  <button id="go">Bắt đầu quét</button>
+  <div id="msg"></div>
+</div>
+
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+  "mindar-image-three":"https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MindARThree } from 'mindar-image-three';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, collection, getDocs, getDoc, doc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const db = getFirestore(initializeApp({
+  apiKey: "AIzaSyAq52d5zrc5rN6UFflwb22bJD9GSjdS0ts",
+  authDomain: "vvss-b7a49.firebaseapp.com",
+  projectId: "vvss-b7a49",
+  storageBucket: "vvss-b7a49.firebasestorage.app",
+  messagingSenderId: "562837285603",
+  appId: "1:562837285603:web:e75d7a983e1ef644c9b3d6"
+}));
+
+const $ = id => document.getElementById(id);
+const goBtn = $('go'), msg = $('msg'), tag = $('tag'), hint = $('hint');
+const mixers = [], loader = new GLTFLoader();
+let found = new Set();
+
+async function loadBundle() {
+  const meta = await getDoc(doc(db, 'ar_bundle', 'meta'));
+  if (!meta.exists() || !meta.data().order?.length) throw new Error('Chưa có thẻ bài nào trong hệ thống.');
+  const { order, chunkCount } = meta.data();
+  const parts = await Promise.all(Array.from({ length: chunkCount }, (_, i) => getDoc(doc(db, 'ar_bundle', 'c' + i))));
+  const bin = atob(parts.map(p => p.data().data).join(''));
+  const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+  const items = {};
+  (await getDocs(collection(db, 'ar_items'))).forEach(d => items[d.id] = d.data());
+  return { order, items, url: URL.createObjectURL(new Blob([bytes])) };
+}
+
+/* Dựng model đứng trên thẻ: thẻ nằm trên mặt phẳng XY, rộng 1 đơn vị, trục Z hướng ra khỏi thẻ */
+async function buildModel(item, anchor) {
+  const gltf = await loader.loadAsync(item.modelUrl);
+  const m = gltf.scene;
+  const size = new THREE.Box3().setFromObject(m).getSize(new THREE.Vector3());
+  m.scale.setScalar(0.9 / Math.max(size.x, size.y, size.z) * (item.scale || 1));
+  const box = new THREE.Box3().setFromObject(m), c = box.getCenter(new THREE.Vector3());
+  m.position.set(-c.x, -box.min.y, -c.z);          // đáy model chạm mặt thẻ, căn giữa
+  const pivot = new THREE.Group();
+  pivot.add(m);
+  pivot.rotation.x = Math.PI / 2;                  // trục Y của model -> trục Z (đứng lên khỏi thẻ)
+  anchor.group.add(pivot);
+  if (gltf.animations.length && item.loopAnim !== false) {
+    const mx = new THREE.AnimationMixer(m);
+    mx.clipAction(gltf.animations[0]).play();
+    mixers.push(mx);
+  }
+}
+
+function refreshUI(lastName) {
+  tag.style.display = found.size ? 'block' : 'none';
+  if (lastName) tag.textContent = lastName;
+  hint.style.display = 'block';
+  hint.textContent = found.size ? '✅ Đã nhận diện thẻ bài' : '📷 Đưa camera vào một thẻ bài';
+}
+
+async function start() {
+  goBtn.disabled = true; msg.textContent = 'Đang tải dữ liệu thẻ bài...';
+  try {
+    const { order, items, url } = await loadBundle();
+    const mindar = new MindARThree({
+      container: $('stage'), imageTargetSrc: url, maxTrack: 3,
+      uiLoading: 'no', uiScanning: 'no', uiError: 'no'
+    });
+    const { renderer, scene, camera } = mindar;
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2.2));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(1, 2, 3); scene.add(sun);
+
+    order.forEach((id, i) => {
+      const item = items[id]; if (!item) return;
+      const anchor = mindar.addAnchor(i);
+      let state = 0; // 0 chưa tải, 1 đang tải, 2 xong
+      anchor.onTargetFound = async () => {
+        found.add(i); refreshUI(item.name);
+        if (state) return; state = 1;
+        try { await buildModel(item, anchor); state = 2; }
+        catch (e) { console.error(e); state = 0; hint.textContent = 'Không tải được model của thẻ này.'; }
+      };
+      anchor.onTargetLost = () => { found.delete(i); refreshUI(); };
+    });
+
+    msg.textContent = 'Đang mở camera...';
+    await mindar.start();
+    $('intro').style.display = 'none';
+    refreshUI();
+    const clock = new THREE.Clock();
+    renderer.setAnimationLoop(() => {
+      const dt = clock.getDelta();
+      mixers.forEach(m => m.update(dt));
+      renderer.render(scene, camera);
+    });
+  } catch (e) {
+    console.error(e);
+    msg.textContent = e.message || 'Không khởi động được AR. Hãy cho phép dùng camera và thử lại.';
+    goBtn.disabled = false;
+  }
+}
+goBtn.addEventListener('click', start);
+</script>
+</body>
+</html>
