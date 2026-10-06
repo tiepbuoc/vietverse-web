@@ -119,7 +119,8 @@ async function stopScan() {
   scanning = false;
   if (!mindar) return;
   try { mindar.renderer.setAnimationLoop(null); mindar.stop(); } catch (e) { console.warn(e); }
-  try { mindar.renderer.domElement.remove(); } catch {}
+  try { mindar.controller?.dispose?.(); } catch {}
+  try { mindar.renderer.dispose(); mindar.renderer.forceContextLoss(); mindar.renderer.domElement.remove(); } catch {}
   $('stage').innerHTML = ''; mindar = null;
   await sleep(400);     // chờ camera được nhả hẳn trước khi 8th Wall mở lại
 }
@@ -138,6 +139,33 @@ async function handoff(item) {
 }
 
 /* ══════════ PHA 2: AR không gian (8th Wall SLAM, như code gốc) ══════════ */
+const MAX_TEX = 1024;   // texture lớn hơn sẽ bị thu nhỏ về mức này
+let modelStats = { tri: 0, tex: 0, big: 0 };
+function optimizeModel(root) {
+  let tri = 0, tex = 0, big = 0; const seen = new Set();
+  root.traverse(o => {
+    if (!o.isMesh) return;
+    const g = o.geometry; tri += (g.index ? g.index.count : g.attributes.position.count) / 3;
+    o.castShadow = o.receiveShadow = false;
+    [].concat(o.material).forEach(mat => {
+      for (const k in mat) {
+        const t = mat[k];
+        if (!t || !t.isTexture || seen.has(t)) continue;
+        seen.add(t); tex++; t.anisotropy = 1;
+        const img = t.image, w = img?.width || 0, h = img?.height || 0;
+        if (Math.max(w, h) > MAX_TEX) {
+          big++;
+          const f = MAX_TEX / Math.max(w, h), c = document.createElement('canvas');
+          c.width = Math.round(w * f); c.height = Math.round(h * f);
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          t.image = c; t.needsUpdate = true;
+        }
+      }
+    });
+  });
+  return { tri: Math.round(tri), tex, big };
+}
+
 function preloadModel(item) {
   return new Promise((resolve, reject) => {
     new THREE.GLTFLoader().load(item.modelUrl, gltf => {
@@ -147,6 +175,7 @@ function preloadModel(item) {
       const s = 0.4 / Math.max(size.x, size.y, size.z) * (item.scale || 1);
       model.scale.setScalar(s);
       model.position.set(-center.x * s, -box.min.y * s, -center.z * s);   // đáy model chạm mặt phẳng
+      modelStats = optimizeModel(model); console.log('Model stats', modelStats);
       loadedModel = new THREE.Group(); loadedModel.add(model);
       animMixer = null;
       if (gltf.animations?.length && item.loopAnim !== false) {
@@ -162,7 +191,7 @@ function launchXR8(item) {
   arRunning = true; placed = null;
   const clock = new THREE.Clock();
   canvas.classList.add('active'); document.body.classList.add('ar');
-  setTag(item.name || 'Vietverse AR'); setHint('📷 Di chuyển camera để quét mặt phẳng...');
+  setTag(item.name || 'Vietverse AR'); setHint('📷 Di chuyển camera để quét mặt phẳng...' + (modelStats.tri > 80000 ? ' (⚠ model nặng ' + Math.round(modelStats.tri / 1000) + 'k tam giác)' : ''));
 
   const scenePipelineModule = () => {
     let reticle = null, scene = null;
@@ -203,7 +232,7 @@ function launchXR8(item) {
 
   const run = () => {
     XR8.clearCameraPipelineModules();   // tránh nạp module trùng khi chạy AR lần 2
-    XR8.XrController.configure({ enableLighting: true });
+    XR8.XrController.configure({ enableLighting: false });
     XR8.addCameraPipelineModules([
       XR8.GlTextureRenderer.pipelineModule(), XR8.Threejs.pipelineModule(), XR8.XrController.pipelineModule(),
       XRExtras.FullWindowCanvas.pipelineModule(), XRExtras.RuntimeError.pipelineModule(), scenePipelineModule(),
