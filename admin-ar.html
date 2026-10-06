@@ -7,7 +7,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700;800&display=swap" rel="stylesheet"/>
 
-  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js"></script>
+  <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+  <script type="module" src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js"></script>
   <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, addDoc, getDocs, deleteDoc, setDoc, doc, query, orderBy, serverTimestamp }
@@ -22,6 +23,8 @@ const db = getFirestore(initializeApp({
   appId: "1:562837285603:web:e75d7a983e1ef644c9b3d6",
   measurementId: "G-BRSGSK6MSM"
 }));
+
+if (!window.MINDAR?.IMAGE?.Compiler) console.error('MindAR Compiler chưa sẵn sàng (window.MINDAR.IMAGE.Compiler).');
 
 const MAX_SIDE = 640;      // thu nhỏ ảnh thẻ trước khi train (nhẹ hơn, đủ chi tiết)
 const DOC_LIMIT = 900000;  // Firestore giới hạn ~1MB/doc
