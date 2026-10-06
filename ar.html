@@ -4,17 +4,29 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>Vietverse | Quét thẻ bài AR</title>
+
+<!-- 8th Wall (SLAM) + XRExtras + Three r128 global: dùng cho pha AR không gian -->
+<script src="https://cdn.jsdelivr.net/npm/@8thwall/engine-binary@1/dist/xr.js" async crossorigin="anonymous" data-preload-chunks="slam"></script>
+<script src="https://cdn.jsdelivr.net/npm/@8thwall/xrextras@1/dist/xrextras.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700;800&family=Be+Vietnam+Pro:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
   *{margin:0;padding:0;box-sizing:border-box;}
   :root{--red:#d32f2f;--gold:#f5c842;}
   html,body{height:100%;background:#180000;color:#fff;font-family:'Be Vietnam Pro',sans-serif;overflow:hidden;}
-  #stage{position:fixed;inset:0;}
+  #stage{position:fixed;inset:0;z-index:1;}
   #stage video,#stage canvas{position:absolute;top:0;left:0;}
+  #camerafeed{position:fixed;inset:0;width:100%;height:100%;z-index:5;display:none;}
+  #camerafeed.active{display:block;}
   .chip{position:fixed;z-index:20;background:rgba(0,0,0,.6);backdrop-filter:blur(6px);border-radius:999px;font-weight:700;}
   #back{top:16px;left:16px;padding:9px 18px;color:#fff;text-decoration:none;font-size:14px;}
-  #tag{top:16px;right:16px;padding:9px 16px;color:var(--gold);font-size:.85rem;display:none;}
+  #tag{top:16px;left:50%;transform:translateX(-50%);padding:9px 16px;color:var(--gold);font-size:.85rem;display:none;max-width:50vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   #hint{bottom:36px;left:50%;transform:translateX(-50%);padding:10px 22px;font-size:13px;text-align:center;max-width:90vw;display:none;}
+  #exit{display:none;top:16px;right:16px;padding:9px 18px;border:none;color:#fff;font:700 14px 'Be Vietnam Pro',sans-serif;background:rgba(211,47,47,.9);cursor:pointer;}
+  body.ar #exit{display:block;}
+  #load{position:fixed;inset:0;z-index:25;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.65);font-weight:700;text-align:center;padding:24px;}
   #intro{position:fixed;inset:0;z-index:30;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center;background:radial-gradient(circle at 50% 30%,#7a0f0f,#180000);}
   #intro h1{font-family:'Baloo 2',cursive;font-size:clamp(2rem,7vw,3.4rem);line-height:1.15;}
   #intro p{max-width:460px;line-height:1.7;color:rgba(255,255,255,.85);font-size:.95rem;}
@@ -25,30 +37,25 @@
 </head>
 <body>
 <div id="stage"></div>
+<canvas id="camerafeed"></canvas>
 <a class="chip" id="back" href="index.html">← Trang chủ</a>
 <div class="chip" id="tag"></div>
-<div class="chip" id="hint">📷 Đưa camera vào một thẻ bài</div>
+<button class="chip" id="exit">✕ Tắt AR</button>
+<div class="chip" id="hint"></div>
+<div id="load"></div>
 
 <div id="intro">
   <h1>Quét thẻ bài<br>Vietverse AR</h1>
-  <p>Đưa camera vào thẻ bài di tích bất kỳ — mô hình 3D của thẻ sẽ hiện lên ngay trên thẻ. Không cần cài app.</p>
+  <p>Đưa camera vào thẻ bài di tích để nhận diện. Mô hình 3D của thẻ sẽ được đặt lên không gian xung quanh bạn.</p>
   <button id="go">Bắt đầu quét</button>
   <div id="msg"></div>
 </div>
 
-<script type="importmap">
-{"imports":{
-  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
-  "mindar-image-three":"https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
-}}
-</script>
 <script type="module">
-import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { MindARThree } from 'mindar-image-three';
+import { MindARThree } from 'https://esm.sh/mind-ar@1.2.5/dist/mindar-image-three.prod.js?deps=three@0.160.0';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, getDocs, getDoc, doc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+// Lưu ý: "THREE" dưới đây là Three r128 global (dùng cho 8th Wall), không phải bản import.
 
 const db = getFirestore(initializeApp({
   apiKey: "AIzaSyAq52d5zrc5rN6UFflwb22bJD9GSjdS0ts",
@@ -60,128 +67,181 @@ const db = getFirestore(initializeApp({
 }));
 
 const $ = id => document.getElementById(id);
-const goBtn = $('go'), msg = $('msg'), tag = $('tag'), hint = $('hint');
-const mixers = [], loader = new GLTFLoader();
-let found = new Set();
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const canvas = $('camerafeed'), hint = $('hint'), tag = $('tag'), loadEl = $('load');
+let bundle = null, mindar = null, scanning = false;
+let arRunning = false, loadedModel = null, animMixer = null, placed = null, tapAbort = null;
 
+const setHint = t => { hint.style.display = t ? 'block' : 'none'; hint.textContent = t || ''; };
+const setTag = t => { tag.style.display = t ? 'block' : 'none'; tag.textContent = t || ''; };
+const showLoad = t => { loadEl.textContent = t; loadEl.style.display = 'flex'; };
+const hideLoad = () => loadEl.style.display = 'none';
+
+/* ══════════ Dữ liệu từ Firestore ══════════ */
 async function loadBundle() {
   const meta = await getDoc(doc(db, 'ar_bundle', 'meta'));
   if (!meta.exists() || !meta.data().order?.length) throw new Error('Chưa có thẻ bài nào trong hệ thống.');
   const { order, chunkCount } = meta.data();
   const parts = await Promise.all(Array.from({ length: chunkCount }, (_, i) => getDoc(doc(db, 'ar_bundle', 'c' + i))));
-  const bin = atob(parts.map(p => p.data().data).join(''));
-  const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+  const bytes = Uint8Array.from(atob(parts.map(p => p.data().data).join('')), c => c.charCodeAt(0));
   const items = {};
   (await getDocs(collection(db, 'ar_items'))).forEach(d => items[d.id] = d.data());
   return { order, items, url: URL.createObjectURL(new Blob([bytes])) };
 }
 
-/* Dựng model đứng trên thẻ: thẻ nằm trên mặt phẳng XY, rộng 1 đơn vị, trục Z hướng ra khỏi thẻ */
-async function buildModel(item, anchor) {
-  const gltf = await loader.loadAsync(item.modelUrl);
-  const m = gltf.scene;
-  const size = new THREE.Box3().setFromObject(m).getSize(new THREE.Vector3());
-  m.scale.setScalar(0.9 / Math.max(size.x, size.y, size.z) * (item.scale || 1));
-  const box = new THREE.Box3().setFromObject(m), c = box.getCenter(new THREE.Vector3());
-  m.position.set(-c.x, -box.min.y, -c.z);          // đáy model chạm mặt thẻ, căn giữa
-  const pivot = new THREE.Group();
-  pivot.add(m);
-  pivot.rotation.x = Math.PI / 2;                  // trục Y của model -> trục Z (đứng lên khỏi thẻ)
-  anchor.group.add(pivot);
-  let tri = 0;
-  m.traverse(o => { if (o.isMesh) { const g = o.geometry; tri += (g.index ? g.index.count : g.attributes.position.count) / 3; } });
-  if (tri > 150000) hint.textContent = '⚠ Model nặng (' + Math.round(tri / 1000) + 'k tam giác), nên giảm poly để mượt hơn.';
-  if (gltf.animations.length && item.loopAnim !== false) {
-    const mx = new THREE.AnimationMixer(m);
-    mx.clipAction(gltf.animations[0]).play();
-    mixers.push(mx);
-  }
-  return pivot;
+/* ══════════ PHA 1: quét thẻ bài (MindAR) — chỉ để nhận diện, không vẽ 3D ══════════ */
+async function startScan() {
+  document.body.classList.remove('ar');
+  setTag(null); setHint('📷 Đưa camera vào một thẻ bài');
+  mindar = new MindARThree({
+    container: $('stage'), imageTargetSrc: bundle.url, maxTrack: 1,
+    missTolerance: 10, warmupTolerance: 5, uiLoading: 'no', uiScanning: 'no', uiError: 'no'
+  });
+  let timer = null;
+  bundle.order.forEach((id, i) => {
+    const item = bundle.items[id]; if (!item) return;
+    const anchor = mindar.addAnchor(i);
+    anchor.onTargetFound = () => {
+      if (timer || !scanning) return;
+      setTag(item.name); setHint('✅ Đã nhận diện — giữ yên một chút...');
+      timer = setTimeout(() => { timer = null; if (scanning) handoff(item); }, 700);   // phải thấy ổn định 0,7s
+    };
+    anchor.onTargetLost = () => {
+      if (timer) { clearTimeout(timer); timer = null; }
+      setTag(null); setHint('📷 Đưa camera vào một thẻ bài');
+    };
+  });
+  await mindar.start();
+  scanning = true;      // không cần vòng render: pha này không vẽ gì, nên rất nhẹ
 }
 
-function refreshUI(lastName) {
-  tag.style.display = found.size ? 'block' : 'none';
-  if (lastName) tag.textContent = lastName;
-  hint.style.display = 'block';
-  hint.textContent = found.size ? '✅ Đã nhận diện thẻ bài' : '📷 Đưa camera vào một thẻ bài';
+async function stopScan() {
+  scanning = false;
+  if (!mindar) return;
+  try { mindar.renderer.setAnimationLoop(null); mindar.stop(); } catch (e) { console.warn(e); }
+  try { mindar.renderer.domElement.remove(); } catch {}
+  $('stage').innerHTML = ''; mindar = null;
+  await sleep(400);     // chờ camera được nhả hẳn trước khi 8th Wall mở lại
 }
 
-/* ===== Ghim model khi mất thẻ: giữ tư thế cuối + bù xoay máy bằng gyro ===== */
-const PIN_MS = 10000;   // giữ model tối đa 10s sau khi mất thẻ
-const pins = new Set();
-let devQ = null;
-const _x90 = new THREE.Quaternion(-Math.sqrt(.5), 0, 0, Math.sqrt(.5)), _z = new THREE.Vector3(0, 0, 1);
-window.addEventListener('deviceorientation', e => {
-  if (e.alpha == null) return;
-  const o = (screen.orientation?.angle ?? window.orientation ?? 0) * Math.PI / 180;
-  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(e.beta * Math.PI / 180, e.alpha * Math.PI / 180, -e.gamma * Math.PI / 180, 'YXZ'));
-  devQ = q.multiply(_x90).multiply(new THREE.Quaternion().setFromAxisAngle(_z, -o));
-});
-
-async function start() {
-  try { if (window.DeviceOrientationEvent?.requestPermission) await DeviceOrientationEvent.requestPermission(); } catch {}
-  goBtn.disabled = true; msg.textContent = 'Đang tải dữ liệu thẻ bài...';
+/* ══════════ Chuyển pha: thẻ -> AR không gian ══════════ */
+async function handoff(item) {
+  scanning = false; setHint(null); showLoad('Đang tải mô hình ' + (item.name || '') + '...');
   try {
-    const { order, items, url } = await loadBundle();
-    const mindar = new MindARThree({
-      container: $('stage'), imageTargetSrc: url, maxTrack: 1, missTolerance: 15, warmupTolerance: 5,
-      uiLoading: 'no', uiScanning: 'no', uiError: 'no'
-    });
-    \1\n    renderer.setPixelRatio(1);  // tránh render độ phân giải x2/x3 trên điện thoại
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2.2));
-    const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(1, 2, 3); scene.add(sun);
+    await Promise.all([stopScan(), preloadModel(item)]);
+    hideLoad(); launchXR8(item);
+  } catch (e) {
+    console.error(e); hideLoad(); await stopScan();
+    setHint('Không tải được mô hình: ' + (e.message || e)); await sleep(2500);
+    await startScan();
+  }
+}
 
-    order.forEach((id, i) => {
-      const item = items[id]; if (!item) return;
-      const anchor = mindar.addAnchor(i);
-      let state = 0, pivot = null, pinned = null;   // state: 0 chưa tải, 1 đang tải, 2 xong
-      anchor.onTargetFound = async () => {
-        found.add(i); refreshUI(item.name);
-        if (pinned) {                               // thẻ xuất hiện lại -> trả model về thẻ
-          scene.remove(pinned.g); pins.delete(pinned);
-          anchor.group.add(pivot); pinned = null;
-        }
-        if (state) return; state = 1;
-        try { pivot = await buildModel(item, anchor); state = 2; }
-        catch (e) { console.error(e); state = 0; hint.textContent = 'Không tải được model của thẻ này.'; }
-      };
-      anchor.onTargetLost = () => {
-        found.delete(i); refreshUI();
-        if (!pivot || pinned) return;               // ghim model tại tư thế cuối cùng
-        const g = new THREE.Group(); g.matrixAutoUpdate = false;
-        g.matrix.copy(anchor.group.matrix); g.add(pivot); scene.add(g);
-        pinned = { g, M0: g.matrix.clone(), Q0: devQ ? devQ.clone() : null, t: performance.now() };
-        pins.add(pinned);
-      };
-    });
+/* ══════════ PHA 2: AR không gian (8th Wall SLAM, như code gốc) ══════════ */
+function preloadModel(item) {
+  return new Promise((resolve, reject) => {
+    new THREE.GLTFLoader().load(item.modelUrl, gltf => {
+      const model = gltf.scene;
+      const box = new THREE.Box3().setFromObject(model);
+      const size = box.getSize(new THREE.Vector3()), center = box.getCenter(new THREE.Vector3());
+      const s = 0.4 / Math.max(size.x, size.y, size.z) * (item.scale || 1);
+      model.scale.setScalar(s);
+      model.position.set(-center.x * s, -box.min.y * s, -center.z * s);   // đáy model chạm mặt phẳng
+      loadedModel = new THREE.Group(); loadedModel.add(model);
+      animMixer = null;
+      if (gltf.animations?.length && item.loopAnim !== false) {
+        animMixer = new THREE.AnimationMixer(model);
+        animMixer.clipAction(gltf.animations[0]).play();
+      }
+      resolve();
+    }, undefined, reject);
+  });
+}
 
-    msg.textContent = 'Đang mở camera...';
-    await mindar.start();
+function launchXR8(item) {
+  arRunning = true; placed = null;
+  const clock = new THREE.Clock();
+  canvas.classList.add('active'); document.body.classList.add('ar');
+  setTag(item.name || 'Vietverse AR'); setHint('📷 Di chuyển camera để quét mặt phẳng...');
+
+  const scenePipelineModule = () => {
+    let reticle = null, scene = null;
+    return {
+      name: 'vietverse-scene',
+      onStart: ({ canvas }) => {
+        ({ scene } = XR8.Threejs.xrScene());
+        scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+        const sun = new THREE.DirectionalLight(0xffffff, 1.4); sun.position.set(4, 6, 4); scene.add(sun);
+        reticle = new THREE.Mesh(
+          new THREE.RingGeometry(0.06, 0.09, 32).rotateX(-Math.PI / 2),
+          new THREE.MeshBasicMaterial({ color: 0xf5c842, side: THREE.DoubleSide, transparent: true, opacity: 0.85 })
+        );
+        reticle.visible = false; scene.add(reticle);
+        tapAbort = new AbortController();
+        const opt = { capture: true, signal: tapAbort.signal };
+        canvas.addEventListener('touchend', onTap, opt);
+        canvas.addEventListener('click', onTap, opt);
+      },
+      onUpdate: () => {
+        if (animMixer) animMixer.update(clock.getDelta());
+        const r = XR8.XrController.hitTest(0.5, 0.5, ['FEATURE_POINT', 'ESTIMATED_SURFACE']);
+        if (r && r.length) {
+          const { position: p, rotation: q } = r[0];
+          reticle.position.set(p.x, p.y, p.z); reticle.quaternion.set(q.x, q.y, q.z, q.w);
+          reticle.visible = true;
+          if (!placed) setHint('👆 Tap để đặt mô hình lên mặt phẳng');
+        } else reticle.visible = false;
+      },
+    };
+    function onTap(e) {
+      if (e.target !== canvas || !reticle?.visible || !loadedModel) return;
+      if (!placed) { placed = loadedModel; scene.add(placed); }        // dùng lại 1 model → animation luôn chạy
+      placed.position.copy(reticle.position); placed.quaternion.copy(reticle.quaternion);
+      setHint('✅ Tap lại để di chuyển • Bấm "Tắt AR" để quét thẻ khác');
+    }
+  };
+
+  const run = () => {
+    XR8.clearCameraPipelineModules();   // tránh nạp module trùng khi chạy AR lần 2
+    XR8.XrController.configure({ enableLighting: true });
+    XR8.addCameraPipelineModules([
+      XR8.GlTextureRenderer.pipelineModule(), XR8.Threejs.pipelineModule(), XR8.XrController.pipelineModule(),
+      XRExtras.FullWindowCanvas.pipelineModule(), XRExtras.RuntimeError.pipelineModule(), scenePipelineModule(),
+    ]);
+    XR8.run({ canvas, allowedDevices: XR8.XrConfig.device().ANY });
+  };
+  window.XR8 ? run() : window.addEventListener('xrloaded', run, { once: true });
+}
+
+/* ══════════ Tắt AR → quay lại quét thẻ mới ══════════ */
+async function exitAR() {
+  if (!arRunning) return;
+  arRunning = false; showLoad('Đang tắt AR...');
+  try { XR8.stop(); XR8.clearCameraPipelineModules(); } catch (e) { console.warn(e); }
+  tapAbort?.abort(); tapAbort = null;
+  canvas.classList.remove('active');
+  loadedModel = animMixer = placed = null;
+  await sleep(500);
+  try { await startScan(); } catch (e) { setHint('Không mở lại được camera: ' + e.message); }
+  hideLoad();
+}
+$('exit').addEventListener('click', exitAR);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') exitAR(); });
+
+/* ══════════ Khởi động ══════════ */
+$('go').addEventListener('click', async () => {
+  $('go').disabled = true; $('msg').textContent = 'Đang tải dữ liệu thẻ bài...';
+  try {
+    bundle = bundle || await loadBundle();
+    $('msg').textContent = 'Đang mở camera...';
+    await startScan();
     $('intro').style.display = 'none';
-    refreshUI();
-    const clock = new THREE.Clock();
-    renderer.setAnimationLoop(() => {
-      const dt = clock.getDelta();
-      mixers.forEach(m => m.update(dt));
-      const now = performance.now();
-      pins.forEach(pn => {
-        if (now - pn.t > PIN_MS) { scene.remove(pn.g); pins.delete(pn); return; }
-        pn.g.matrix.copy(pn.M0);
-        if (pn.Q0 && devQ) {                         // xoay model ngược chiều với xoay của máy
-          const D = devQ.clone().invert().multiply(pn.Q0);
-          pn.g.matrix.premultiply(new THREE.Matrix4().makeRotationFromQuaternion(D));
-        }
-        pn.g.matrixWorldNeedsUpdate = true;
-      });
-      renderer.render(scene, camera);
-    });
   } catch (e) {
     console.error(e);
-    msg.textContent = e.message || 'Không khởi động được AR. Hãy cho phép dùng camera và thử lại.';
-    goBtn.disabled = false;
+    $('msg').textContent = e.message || 'Không khởi động được. Hãy cho phép dùng camera và thử lại.';
+    $('go').disabled = false;
   }
-}
-goBtn.addEventListener('click', start);
+});
 </script>
 </body>
 </html>
