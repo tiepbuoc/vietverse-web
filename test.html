@@ -5,11 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>Vietverse | Quét thẻ bài AR</title>
 
-<!-- 8th Wall (SLAM) + XRExtras + Three r128 global: dùng cho pha AR không gian -->
-<script src="https://cdn.jsdelivr.net/npm/@8thwall/engine-binary@1/dist/xr.js" async crossorigin="anonymous" data-preload-chunks="slam"></script>
-<script src="https://cdn.jsdelivr.net/npm/@8thwall/xrextras@1/dist/xrextras.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<!-- model-viewer: AR native (Android WebXR / Scene Viewer, iOS Quick Look) -->
+<script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js"></script>
 
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700;800&family=Be+Vietnam+Pro:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
@@ -18,51 +15,59 @@
   html,body{height:100%;background:#180000;color:#fff;font-family:'Be Vietnam Pro',sans-serif;overflow:hidden;}
   #stage{position:fixed;inset:0;z-index:1;}
   #stage video,#stage canvas{position:absolute;top:0;left:0;}
-  #camerafeed{position:fixed;inset:0;width:100%;height:100%;z-index:5;display:none;}
-  #camerafeed.active{display:block;}
-  .chip{position:fixed;z-index:20;background:rgba(0,0,0,.6);backdrop-filter:blur(6px);border-radius:999px;font-weight:700;}
+  .chip{position:fixed;z-index:40;background:rgba(0,0,0,.6);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border-radius:999px;font-weight:700;}
   #back{top:16px;left:16px;padding:9px 18px;color:#fff;text-decoration:none;font-size:14px;}
   #tag{top:16px;left:50%;transform:translateX(-50%);padding:9px 16px;color:var(--gold);font-size:.85rem;display:none;max-width:50vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   #hint{bottom:36px;left:50%;transform:translateX(-50%);padding:10px 22px;font-size:13px;text-align:center;max-width:90vw;display:none;}
-  #exit{display:none;top:16px;right:16px;padding:9px 18px;border:none;color:#fff;font:700 14px 'Be Vietnam Pro',sans-serif;background:rgba(211,47,47,.9);cursor:pointer;}
-  body.ar #exit{display:block;}
   #load{position:fixed;inset:0;z-index:25;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.65);font-weight:700;text-align:center;padding:24px;}
   #intro{position:fixed;inset:0;z-index:30;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center;background:radial-gradient(circle at 50% 30%,#7a0f0f,#180000);}
   #intro h1{font-family:'Baloo 2',cursive;font-size:clamp(2rem,7vw,3.4rem);line-height:1.15;}
   #intro p{max-width:460px;line-height:1.7;color:rgba(255,255,255,.85);font-size:.95rem;}
-  #go{border:none;border-radius:16px;padding:16px 36px;font:800 1rem 'Be Vietnam Pro',sans-serif;color:#fff;cursor:pointer;background:linear-gradient(135deg,var(--red),#ef5350);box-shadow:0 8px 24px rgba(211,47,47,.45);}
-  #go:disabled{opacity:.6;cursor:wait;}
+  .btn{border:none;border-radius:16px;padding:16px 36px;font:800 1rem 'Be Vietnam Pro',sans-serif;color:#fff;cursor:pointer;background:linear-gradient(135deg,var(--red),#ef5350);box-shadow:0 8px 24px rgba(211,47,47,.45);}
+  .btn:disabled{opacity:.6;cursor:wait;}
+  .btn.ghost{background:rgba(255,255,255,.14);box-shadow:none;padding:12px 28px;font-size:.9rem;}
   #msg{min-height:1.4em;font-size:.88rem;color:#ffcdd2;}
+
+  /* ── Màn xem 3D + vào AR ── */
+  #viewer{position:fixed;inset:0;z-index:35;display:none;background:radial-gradient(circle at 50% 30%,#5a0a0a,#180000);}
+  #viewer.show{display:block;}
+  #mv{width:100%;height:100%;background:transparent;--poster-color:transparent;--progress-bar-color:#f5c842;}
+  #vtitle{position:absolute;top:64px;left:0;right:0;text-align:center;font-family:'Baloo 2',cursive;font-size:1.5rem;color:var(--gold);padding:0 20px;pointer-events:none;}
+  #arBtn{position:absolute;bottom:96px;left:50%;transform:translateX(-50%);white-space:nowrap;}
+  #rescan{position:absolute;bottom:34px;left:50%;transform:translateX(-50%);white-space:nowrap;}
+  #vstatus{position:absolute;bottom:150px;left:0;right:0;text-align:center;font-size:.8rem;color:rgba(255,255,255,.75);padding:0 24px;pointer-events:none;}
 </style>
 </head>
 <body>
 <div id="stage"></div>
-<canvas id="camerafeed"></canvas>
 <a class="chip" id="back" href="index.html">← Trang chủ</a>
 <div class="chip" id="tag"></div>
-<button class="chip" id="exit">✕ Tắt AR</button>
 <div class="chip" id="hint"></div>
 <div id="load"></div>
 
+<div id="viewer">
+  <div id="vtitle"></div>
+  <model-viewer id="mv"
+    ar ar-modes="webxr scene-viewer quick-look" ar-placement="floor" ar-scale="auto"
+    camera-controls touch-action="pan-y" auto-rotate shadow-intensity="1"
+    environment-image="neutral" exposure="1" autoplay loading="eager" interaction-prompt="none">
+    <button slot="ar-button" id="arBtn" class="btn">Xem trong AR</button>
+  </model-viewer>
+  <div id="vstatus"></div>
+  <button class="btn ghost" id="rescan">Quét thẻ khác</button>
+</div>
+
 <div id="intro">
   <h1>Quét thẻ bài<br>Vietverse AR</h1>
-  <p>Đưa camera vào thẻ bài di tích để nhận diện. Mô hình 3D của thẻ sẽ được đặt lên không gian xung quanh bạn.</p>
-  <button id="go">Bắt đầu quét</button>
+  <p>Đưa camera vào thẻ bài di tích để nhận diện. Sau đó bấm "Xem trong AR" để đặt mô hình 3D lên không gian xung quanh bạn.</p>
+  <button class="btn" id="go">Bắt đầu quét</button>
   <div id="msg"></div>
 </div>
 
-<script type="importmap">
-{"imports":{
-  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
-  "mindar-image-three":"https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
-}}
-</script>
 <script type="module">
-import { MindARThree } from 'mindar-image-three';
+import { MindARThree } from 'https://esm.sh/mind-ar@1.2.5/dist/mindar-image-three.prod.js?deps=three@0.160.0';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, collection, getDocs, getDoc, doc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-// Lưu ý: "THREE" dưới đây là Three r128 global (dùng cho 8th Wall), không phải bản import.
 
 const db = getFirestore(initializeApp({
   apiKey: "AIzaSyAq52d5zrc5rN6UFflwb22bJD9GSjdS0ts",
@@ -75,9 +80,8 @@ const db = getFirestore(initializeApp({
 
 const $ = id => document.getElementById(id);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const canvas = $('camerafeed'), hint = $('hint'), tag = $('tag'), loadEl = $('load');
+const hint = $('hint'), tag = $('tag'), loadEl = $('load'), mv = $('mv'), viewer = $('viewer');
 let bundle = null, mindar = null, scanning = false;
-let arRunning = false, loadedModel = null, animMixer = null, placed = null, tapAbort = null;
 
 const setHint = t => { hint.style.display = t ? 'block' : 'none'; hint.textContent = t || ''; };
 const setTag = t => { tag.style.display = t ? 'block' : 'none'; tag.textContent = t || ''; };
@@ -96,9 +100,9 @@ async function loadBundle() {
   return { order, items, url: URL.createObjectURL(new Blob([bytes])) };
 }
 
-/* ══════════ PHA 1: quét thẻ bài (MindAR) — chỉ để nhận diện, không vẽ 3D ══════════ */
+/* ══════════ PHA 1: quét thẻ bài (MindAR) — chỉ nhận diện ══════════ */
 async function startScan() {
-  document.body.classList.remove('ar');
+  closeViewer();
   setTag(null); setHint('📷 Đưa camera vào một thẻ bài');
   mindar = new MindARThree({
     container: $('stage'), imageTargetSrc: bundle.url, maxTrack: 1,
@@ -111,7 +115,7 @@ async function startScan() {
     anchor.onTargetFound = () => {
       if (timer || !scanning) return;
       setTag(item.name); setHint('✅ Đã nhận diện — giữ yên một chút...');
-      timer = setTimeout(() => { timer = null; if (scanning) handoff(item); }, 700);   // phải thấy ổn định 0,7s
+      timer = setTimeout(() => { timer = null; if (scanning) handoff(item); }, 700);
     };
     anchor.onTargetLost = () => {
       if (timer) { clearTimeout(timer); timer = null; }
@@ -119,121 +123,80 @@ async function startScan() {
     };
   });
   await mindar.start();
-  scanning = true;      // không cần vòng render: pha này không vẽ gì, nên rất nhẹ
+  scanning = true;
 }
 
 async function stopScan() {
   scanning = false;
   if (!mindar) return;
-  try { mindar.renderer.setAnimationLoop(null); mindar.stop(); } catch (e) { console.warn(e); }
-  try { mindar.renderer.domElement.remove(); } catch {}
-  $('stage').innerHTML = ''; mindar = null;
-  await sleep(400);     // chờ camera được nhả hẳn trước khi 8th Wall mở lại
+  const m = mindar; mindar = null;
+  try { m.video?.srcObject?.getTracks().forEach(t => t.stop()); if (m.video) m.video.srcObject = null; } catch {}
+  try { m.renderer.setAnimationLoop(null); m.stop(); } catch (e) { console.warn(e); }
+  try { m.controller?.dispose?.(); } catch {}
+  try { m.renderer.dispose(); m.renderer.forceContextLoss(); m.renderer.domElement.remove(); } catch {}
+  $('stage').innerHTML = '';
+  await sleep(500);   // đảm bảo camera được nhả trước khi AR native mở
 }
 
-/* ══════════ Chuyển pha: thẻ -> AR không gian ══════════ */
+/* ══════════ Chuyển pha: nhận diện -> màn xem 3D (AR chạy khi người dùng bấm nút) ══════════ */
 async function handoff(item) {
-  scanning = false; setHint(null); showLoad('Đang tải mô hình ' + (item.name || '') + '...');
+  scanning = false; setHint(null); setTag(null);
+  showLoad('Đang chuẩn bị ' + (item.name || '') + '...');
+  await stopScan();
+  hideLoad();
+  openViewer(item);
+}
+
+/* ══════════ PHA 2: model-viewer (WebXR / Scene Viewer / Quick Look) ══════════ */
+function openViewer(item) {
+  $('vtitle').textContent = item.name || 'Vietverse AR';
+  $('vstatus').textContent = 'Đang tải mô hình 0%';
+  $('arBtn').disabled = true;
+  mv.removeAttribute('scale');
+  if (item.usdzUrl) mv.setAttribute('ios-src', item.usdzUrl); else mv.removeAttribute('ios-src');
+  if (item.loopAnim === false) mv.removeAttribute('autoplay'); else mv.setAttribute('autoplay', '');
+  mv.alt = item.name || 'Mô hình 3D';
+  mv.dataset.userScale = item.scale || 1;
+  mv.src = item.modelUrl;
+  viewer.classList.add('show');
+}
+
+function closeViewer() {
+  viewer.classList.remove('show');
+  mv.removeAttribute('src');          // giải phóng model/texture
+  mv.removeAttribute('ios-src');
+}
+
+mv.addEventListener('progress', e => {
+  const p = Math.round((e.detail.totalProgress || 0) * 100);
+  if (p < 100) $('vstatus').textContent = 'Đang tải mô hình ' + p + '%';
+});
+mv.addEventListener('load', () => {
+  // Chuẩn hoá kích thước thật: cạnh lớn nhất ≈ 0,4 m (nhân hệ số scale của thẻ)
   try {
-    await Promise.all([stopScan(), preloadModel(item)]);
-    hideLoad(); launchXR8(item);
-  } catch (e) {
-    console.error(e); hideLoad(); await stopScan();
-    setHint('Không tải được mô hình: ' + (e.message || e)); await sleep(2500);
-    await startScan();
-  }
-}
-
-/* ══════════ PHA 2: AR không gian (8th Wall SLAM, như code gốc) ══════════ */
-function preloadModel(item) {
-  return new Promise((resolve, reject) => {
-    new THREE.GLTFLoader().load(item.modelUrl, gltf => {
-      const model = gltf.scene;
-      const box = new THREE.Box3().setFromObject(model);
-      const size = box.getSize(new THREE.Vector3()), center = box.getCenter(new THREE.Vector3());
-      const s = 0.4 / Math.max(size.x, size.y, size.z) * (item.scale || 1);
-      model.scale.setScalar(s);
-      model.position.set(-center.x * s, -box.min.y * s, -center.z * s);   // đáy model chạm mặt phẳng
-      loadedModel = new THREE.Group(); loadedModel.add(model);
-      animMixer = null;
-      if (gltf.animations?.length && item.loopAnim !== false) {
-        animMixer = new THREE.AnimationMixer(model);
-        animMixer.clipAction(gltf.animations[0]).play();
-      }
-      resolve();
-    }, undefined, reject);
-  });
-}
-
-function launchXR8(item) {
-  arRunning = true; placed = null;
-  const clock = new THREE.Clock();
-  canvas.classList.add('active'); document.body.classList.add('ar');
-  setTag(item.name || 'Vietverse AR'); setHint('📷 Di chuyển camera để quét mặt phẳng...');
-
-  const scenePipelineModule = () => {
-    let reticle = null, scene = null;
-    return {
-      name: 'vietverse-scene',
-      onStart: ({ canvas }) => {
-        ({ scene } = XR8.Threejs.xrScene());
-        scene.add(new THREE.AmbientLight(0xffffff, 1.0));
-        const sun = new THREE.DirectionalLight(0xffffff, 1.4); sun.position.set(4, 6, 4); scene.add(sun);
-        reticle = new THREE.Mesh(
-          new THREE.RingGeometry(0.06, 0.09, 32).rotateX(-Math.PI / 2),
-          new THREE.MeshBasicMaterial({ color: 0xf5c842, side: THREE.DoubleSide, transparent: true, opacity: 0.85 })
-        );
-        reticle.visible = false; scene.add(reticle);
-        tapAbort = new AbortController();
-        const opt = { capture: true, signal: tapAbort.signal };
-        canvas.addEventListener('touchend', onTap, opt);
-        canvas.addEventListener('click', onTap, opt);
-      },
-      onUpdate: () => {
-        if (animMixer) animMixer.update(clock.getDelta());
-        const r = XR8.XrController.hitTest(0.5, 0.5, ['FEATURE_POINT', 'ESTIMATED_SURFACE']);
-        if (r && r.length) {
-          const { position: p, rotation: q } = r[0];
-          reticle.position.set(p.x, p.y, p.z); reticle.quaternion.set(q.x, q.y, q.z, q.w);
-          reticle.visible = true;
-          if (!placed) setHint('👆 Tap để đặt mô hình lên mặt phẳng');
-        } else reticle.visible = false;
-      },
-    };
-    function onTap(e) {
-      if (e.target !== canvas || !reticle?.visible || !loadedModel) return;
-      if (!placed) { placed = loadedModel; scene.add(placed); }        // dùng lại 1 model → animation luôn chạy
-      placed.position.copy(reticle.position); placed.quaternion.copy(reticle.quaternion);
-      setHint('✅ Tap lại để di chuyển • Bấm "Tắt AR" để quét thẻ khác');
+    const d = mv.getDimensions(), max = Math.max(d.x, d.y, d.z);
+    if (max > 0) {
+      const s = 0.4 / max * (parseFloat(mv.dataset.userScale) || 1);
+      mv.scale = `${s} ${s} ${s}`;
     }
-  };
+  } catch (e) { console.warn(e); }
+  $('arBtn').disabled = false;
+  $('vstatus').textContent = mv.canActivateAR ? 'Bấm "Xem trong AR", hướng camera xuống sàn rồi chạm để đặt.' : 'Thiết bị này chưa hỗ trợ AR — bạn vẫn có thể xoay xem mô hình 3D.';
+});
+mv.addEventListener('error', e => {
+  console.error(e.detail);
+  $('vstatus').textContent = 'Không tải được mô hình. Hãy thử quét lại.';
+});
+mv.addEventListener('ar-status', e => {
+  if (e.detail.status === 'failed') $('vstatus').textContent = 'Không mở được AR trên thiết bị này.';
+});
 
-  const run = () => {
-    XR8.clearCameraPipelineModules();   // tránh nạp module trùng khi chạy AR lần 2
-    XR8.XrController.configure({ enableLighting: true });
-    XR8.addCameraPipelineModules([
-      XR8.GlTextureRenderer.pipelineModule(), XR8.Threejs.pipelineModule(), XR8.XrController.pipelineModule(),
-      XRExtras.FullWindowCanvas.pipelineModule(), XRExtras.RuntimeError.pipelineModule(), scenePipelineModule(),
-    ]);
-    XR8.run({ canvas, allowedDevices: XR8.XrConfig.device().ANY });
-  };
-  window.XR8 ? run() : window.addEventListener('xrloaded', run, { once: true });
-}
-
-/* ══════════ Tắt AR → quay lại quét thẻ mới ══════════ */
-async function exitAR() {
-  if (!arRunning) return;
-  arRunning = false; showLoad('Đang tắt AR...');
-  try { XR8.stop(); XR8.clearCameraPipelineModules(); } catch (e) { console.warn(e); }
-  tapAbort?.abort(); tapAbort = null;
-  canvas.classList.remove('active');
-  loadedModel = animMixer = placed = null;
-  await sleep(500);
+// Quay lại quét thẻ khác (cú chạm mới cho phép mở lại camera)
+$('rescan').addEventListener('click', async () => {
+  showLoad('Đang mở camera...');
   try { await startScan(); } catch (e) { setHint('Không mở lại được camera: ' + e.message); }
   hideLoad();
-}
-$('exit').addEventListener('click', exitAR);
-document.addEventListener('keydown', e => { if (e.key === 'Escape') exitAR(); });
+});
 
 /* ══════════ Khởi động ══════════ */
 $('go').addEventListener('click', async () => {
